@@ -7,83 +7,103 @@ DATA_DIR = PROJECT_ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"
 
 
-def load_fedfunds() -> pd.DataFrame:
-    """
-    Load the effective federal funds rate from data/raw/fedfunds.csv (FRED FEDFUNDS series).
+# ---------- FRED GENERIC LOADER ----------
 
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with columns:
-        - date: datetime64
-        - fedfunds: float
+def load_fred_series(filename: str, value_name: str) -> pd.DataFrame:
     """
-    path = RAW_DIR / "fedfunds.csv"
+    Generic loader for FRED CSV files stored in data/raw.
+
+    - Detects date column ('date' or 'observation_date')
+    - Detects value column (first non-date column)
+    - Renames columns to: 'date' and <value_name>
+    - If data is higher frequency than monthly (e.g. daily),
+      aggregates to monthly averages.
+    """
+    path = RAW_DIR / filename
+    if not path.exists():
+        raise FileNotFoundError(f"File {path} not found")
+
     df = pd.read_csv(path)
-
-    # Clean column names: lowercase, strip spaces, remove BOM if present
+    # clean column names
     df.columns = [c.strip().lower().replace("\ufeff", "") for c in df.columns]
 
-    # Detect date column name
+    # detect date column
     if "date" in df.columns:
         date_col = "date"
     elif "observation_date" in df.columns:
         date_col = "observation_date"
     else:
-        raise ValueError(f"No date column found in FEDFUNDS file: {df.columns}")
+        raise ValueError(f"No date column found in {df.columns}")
+
+    # detect value column = first non-date column
+    value_col = None
+    for c in df.columns:
+        if c != date_col:
+            value_col = c
+            break
+    if value_col is None:
+        raise ValueError(f"No value column found in {df.columns}")
 
     df[date_col] = pd.to_datetime(df[date_col])
-    df = df.rename(columns={date_col: "date"})
+    df = df.rename(columns={date_col: "date", value_col: value_name})
+    df = df.sort_values("date").reset_index(drop=True)
 
-    return df.sort_values("date").reset_index(drop=True)
+    # if more rows than unique months -> probably daily -> aggregate to monthly
+    n_months = df["date"].dt.to_period("M").nunique()
+    if n_months < len(df):
+        df = (
+            df.set_index("date")[value_name]
+              .resample("M")          # monthly
+              .mean()                 # monthly average
+              .reset_index()
+        )
 
+    return df
+
+
+def load_fedfunds() -> pd.DataFrame:
+    return load_fred_series("fedfunds.csv", "fedfunds")
+
+
+# ---------- TARGET RATE (DFEDTAR + DFEDTARU) ----------
 
 def load_fomc_target_full() -> pd.DataFrame:
     """
-    Build a complete Fed policy rate series by combining:
-    - DFEDTAR  (single target rate) up to 2008-12-15
-    - DFEDTARU (target range upper bound) from 2008-12-16 onward
+    Build full target-rate series:
+    - DFEDTAR (single target) until 2008-12-15
+    - DFEDTARU (upper bound) from 2008-12-16 onwards
 
-    Both series are daily FRED series.
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with columns:
-        - date: datetime64
-        - target_rate: float
+    Returns:
+        DataFrame with columns ['date', 'target_rate'] at daily frequency.
     """
-    # ---------- 1) Load DFEDTAR (pre-2008) ----------
+    # 1) DFEDTAR
     path_dfedtar = RAW_DIR / "dfedtar.csv"
     df1 = pd.read_csv(path_dfedtar)
     df1.columns = [c.strip().lower().replace("\ufeff", "") for c in df1.columns]
 
-    # Date column
     if "date" in df1.columns:
         date_col1 = "date"
     elif "observation_date" in df1.columns:
         date_col1 = "observation_date"
     else:
-        raise ValueError(f"No date column found in DFEDTAR: {df1.columns}")
+        raise ValueError(f"No date column in DFEDTAR: {df1.columns}")
 
-    # Value column
     value_col1 = None
     for c in ["dfedtar", "value", "target_rate"]:
         if c in df1.columns:
             value_col1 = c
             break
     if value_col1 is None:
-        raise ValueError(f"No value column found in DFEDTAR: {df1.columns}")
+        raise ValueError(f"No value column in DFEDTAR: {df1.columns}")
 
     df1[date_col1] = pd.to_datetime(df1[date_col1])
     df1 = df1.rename(columns={date_col1: "date", value_col1: "target_rate"})
     df1 = df1[["date", "target_rate"]].sort_values("date")
 
-    # Keep only dates strictly before the range era
     cutoff = pd.Timestamp("2008-12-16")
     df1 = df1[df1["date"] < cutoff]
 
-    # ---------- 2) Load DFEDTARU (post-2008) ----------
+    # 2) DFEDTARU
     path_dfedtaru = RAW_DIR / "dfedtaru.csv"
     df2 = pd.read_csv(path_dfedtaru)
     df2.columns = [c.strip().lower().replace("\ufeff", "") for c in df2.columns]
@@ -93,7 +113,7 @@ def load_fomc_target_full() -> pd.DataFrame:
     elif "observation_date" in df2.columns:
         date_col2 = "observation_date"
     else:
-        raise ValueError(f"No date column found in DFEDTARU: {df2.columns}")
+        raise ValueError(f"No date column in DFEDTARU: {df2.columns}")
 
     value_col2 = None
     for c in ["dfedtaru", "value", "upper_target", "target"]:
@@ -101,44 +121,26 @@ def load_fomc_target_full() -> pd.DataFrame:
             value_col2 = c
             break
     if value_col2 is None:
-        raise ValueError(f"No value column found in DFEDTARU: {df2.columns}")
+        raise ValueError(f"No value column in DFEDTARU: {df2.columns}")
 
     df2[date_col2] = pd.to_datetime(df2[date_col2])
     df2 = df2.rename(columns={date_col2: "date", value_col2: "target_rate"})
     df2 = df2[["date", "target_rate"]].sort_values("date")
-
-    # Keep only the range era
     df2 = df2[df2["date"] >= cutoff]
 
-    # ---------- 3) Concatenate and clean ----------
+    # 3) concat
     df_full = pd.concat([df1, df2], ignore_index=True)
-    df_full = (
-        df_full.drop_duplicates(subset=["date"])
-        .sort_values("date")
-        .reset_index(drop=True)
-    )
-
+    df_full = df_full.drop_duplicates(subset=["date"]).sort_values("date").reset_index(drop=True)
     return df_full
 
 
 def detect_fomc_decisions(df_full: pd.DataFrame) -> pd.DataFrame:
     """
-    Detect dates where the policy rate changes.
-    These correspond to FOMC decisions (or emergency moves).
+    Detect dates when the target rate changes.
+    Each change corresponds to a policy decision (FOMC or emergency move).
 
-    Parameters
-    ----------
-    df_full : pd.DataFrame
-        Output of load_fomc_target_full(), with columns:
-        - date
-        - target_rate
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with one row per rate change:
-        - date
-        - target_rate
+    Returns:
+        DataFrame with ['date', 'target_rate'] at decision dates only.
     """
     df = df_full.copy()
     df["prev"] = df["target_rate"].shift(1)
@@ -147,21 +149,54 @@ def detect_fomc_decisions(df_full: pd.DataFrame) -> pd.DataFrame:
     return decisions
 
 
-if __name__ == "__main__":
-    # Simple sanity checks when running this file directly
+# ---------- MACRO SERIES LOADER (CPI, UNRATE, etc.) ----------
 
+def load_macro_series() -> dict:
+    """
+    Load all macro series as monthly data.
+    Returns a dict of DataFrames keyed by series name.
+    """
+    series = {}
+
+    series["fedfunds"] = load_fred_series("fedfunds.csv", "fedfunds")
+    series["cpi"] = load_fred_series("cpiaucsl.csv", "cpi")
+    series["core_pce"] = load_fred_series("pcepilfe.csv", "core_pce")
+    series["unemployment"] = load_fred_series("unrate.csv", "unemployment")
+    series["industrial_prod"] = load_fred_series("indpro.csv", "indpro")
+    series["yield_curve"] = load_fred_series("t10y3m.csv", "t10y3m")
+
+    # optional: corporate spread if file exists
+    try:
+        series["baa_spread"] = load_fred_series("baa10ym.csv", "baa10ym")
+    except FileNotFoundError:
+        pass
+
+    return series
+
+
+# ---------- QUICK TEST WHEN RUN AS SCRIPT ----------
+
+if __name__ == "__main__":
     print("=== FEDFUNDS ===")
     fed = load_fedfunds()
     print(fed.head())
     print("Nb obs FEDFUNDS:", len(fed))
 
-    print("\n=== FED TARGET FULL (DFEDTAR + DFEDTARU) ===")
-    full = load_fomc_target_full()
-    print(full.head())
-    print(full.tail())
-    print("Nb obs daily:", len(full))
+    print("\n=== FULL TARGET RATE (DFEDTAR + DFEDTARU) ===")
+    full_tgt = load_fomc_target_full()
+    print(full_tgt.head())
+    print(full_tgt.tail())
+    print("Nb obs daily:", len(full_tgt))
 
     print("\n=== FOMC DECISIONS (rate changes) ===")
-    dec = detect_fomc_decisions(full)
-    print(dec.head(15))
-    print("Nb decisions detected:", len(dec))
+    decisions = detect_fomc_decisions(full_tgt)
+    print(decisions.head(15))
+    print("Nb decisions detected:", len(decisions))
+
+    print("\n=== MACRO SERIES (monthly) ===")
+    macro = load_macro_series()
+    for name, df in macro.items():
+        print(f"\n-- {name} --")
+        print(df.head())
+        print(df.tail())
+        print("Nb obs:", len(df))

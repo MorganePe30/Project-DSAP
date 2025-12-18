@@ -1,4 +1,5 @@
 from pathlib import Path
+from sklearn.linear_model import Ridge, LinearRegression
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
@@ -6,6 +7,7 @@ import numpy as np
 from sklearn.linear_model import Lasso
 from sklearn.ensemble import RandomForestRegressor
 from xgboost import XGBRegressor
+
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -46,23 +48,25 @@ def main():
     # Models
     # -----------------------
     models = {
-        "Lasso": Lasso(alpha=0.01, random_state=42),
-        "Random Forest": RandomForestRegressor(
-            n_estimators=500,
-            max_depth=6,
-            min_samples_leaf=3,
-            random_state=42,
-        ),
-        "XGBoost": XGBRegressor(
-            n_estimators=800,
-            learning_rate=0.03,
-            max_depth=4,
-            subsample=0.9,
-            colsample_bytree=0.9,
-            random_state=42,
-            objective="reg:squarederror",
-        ),
-    }
+    "Taylor (OLS)": LinearRegression(),
+    "Ridge": Ridge(alpha=1.0),
+    "Lasso": Lasso(alpha=0.01, random_state=42),
+    "Random Forest": RandomForestRegressor(
+        n_estimators=500,
+        max_depth=6,
+        min_samples_leaf=3,
+        random_state=42,
+    ),
+    "XGBoost": XGBRegressor(
+        n_estimators=800,
+        learning_rate=0.03,
+        max_depth=4,
+        subsample=0.9,
+        colsample_bytree=0.9,
+        random_state=42,
+        objective="reg:squarederror",
+    ),
+}
 
     predictions = {}
 

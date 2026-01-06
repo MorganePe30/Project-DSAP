@@ -27,7 +27,7 @@ def load_dataset() -> pd.DataFrame:
 
 
 def split_train_test(df: pd.DataFrame):
-    train = df[(df["date"] >= "2000-01-01") & (df["date"] < "2016-01-01")].copy()
+    train = df[df["date"] < "2016-01-01"].copy()
     test = df[df["date"] >= "2016-01-01"].copy()
     return train, test
 
@@ -71,7 +71,7 @@ def main():
 
     print("Dataset:")
     print(f"  Total observations : {len(df)} FOMC decisions")
-    print(f"  Training period    : 2000–2015 ({len(train)} observations)")
+    print(f"  Training period    : 1982–2015 ({len(train)} observations)")
     print(f"  Test period        : 2016–2025 ({len(test)} observations)")
     print()
     print("Features used:")

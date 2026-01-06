@@ -21,11 +21,11 @@ def load_ml_dataset() -> pd.DataFrame:
 def train_test_split_time(df: pd.DataFrame):
     """
     Time-based split:
-    - Train: 2000–2015
+    - Train: 1982–2015
     - Test : 2016–2025
     """
     df = df.sort_values("date").reset_index(drop=True)
-    df = df[df["date"] >= "2000-01-01"].reset_index(drop=True)
+    
 
     train = df[df["date"] < "2016-01-01"].copy()
     test = df[df["date"] >= "2016-01-01"].copy()
@@ -80,7 +80,7 @@ def main():
 
     print("\nDataset:")
     print(f"  Total observations : {len(df)} FOMC decisions")
-    print("  Training period    : 2000–2015 "
+    print("  Training period    : 1982–2015 "
       f"({len(X_train)} observations)")
     print("  Test period        : 2016–2025 "
       f"({len(X_test)} observations)\n")
